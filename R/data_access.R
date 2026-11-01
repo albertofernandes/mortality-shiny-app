@@ -275,13 +275,25 @@ add_calendar_deaths <- function(df_death, years, area, cause) {
   dplyr::bind_rows(df_death, rows[rows$area %in% area, , drop = FALSE])
 }
 
+# The prepared files' answer (R/prepared_data.R), or NULL when they cannot give
+# one - not loaded, missing, stale, or failing for any reason - and the caller
+# computes from the archive as before.
+from_prepared <- function(reader, ...) {
+  if (!exists(reader, mode = "function", inherits = TRUE)) return(NULL)
+  tryCatch(get(reader, mode = "function", inherits = TRUE)(...), error = function(e) NULL)
+}
+
 get_data_for_snapshot <- function(area, cause, years = year_of_interest, population_basis = default_population_basis()) {
-  df_pop <- dplyr::bind_rows(
-    get_snapshot_population_data(years, area),
-    load_previous_population(years, population_basis, function(year) get_snapshot_population_data(year, area))
-  ) %>%
-    apply_population_basis(years, population_basis)
-  df_death <- load_snapshot_deaths(years, area, cause)
+  df_pop <- from_prepared("prepared_population_for", years, area, population_basis)
+  if (is.null(df_pop)) {
+    df_pop <- dplyr::bind_rows(
+      get_snapshot_population_data(years, area),
+      load_previous_population(years, population_basis, function(year) get_snapshot_population_data(year, area))
+    ) %>%
+      apply_population_basis(years, population_basis)
+  }
+  df_death <- from_prepared("prepared_deaths_for", years, area, cause)
+  if (is.null(df_death)) df_death <- load_snapshot_deaths(years, area, cause)
 
   df_full <- df_pop %>%
     dplyr::rename(population_source = source_indicator) %>%
@@ -313,7 +325,8 @@ get_death_data_for <- function(area, cause, years = year_of_interest, year_order
   data_source <- normalize_data_source(data_source)
   if (identical(data_source, "snapshot")) {
     years <- order_years(years, year_order)
-    return(load_snapshot_deaths(years, area, cause))
+    prepared <- from_prepared("prepared_deaths_for", years, area, cause)
+    return(if (is.null(prepared)) load_snapshot_deaths(years, area, cause) else prepared)
   }
 
   year_order <- normalize_year_order(year_order)

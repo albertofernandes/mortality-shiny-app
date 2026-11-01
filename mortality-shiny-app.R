@@ -57,6 +57,8 @@ for (app_file in c(
   "R/forecast_helpers.R",
   "R/trend.R",
   "R/data_access.R",
+  # Read before the archive when current; see the file.
+  "R/prepared_data.R",
   "R/shared_selection.R",
   "R/ui_helpers.R"
 )) {
@@ -152,21 +154,31 @@ server <- function(input, output, session) {
   # Applied immediately after every death load, so each tab gets the same
   # substitution without repeating it. Population is untouched.
   apply_region_source <- function(df, expanded_regions) {
+    # Rows for the municipalities a composition subtracts, which are not
+    # members of the region and so are never in the loaded frame. Read from
+    # the snapshot archive, like the regional rows themselves.
+    load_municipal_deaths <- function(areas, years, causes) {
+      tryCatch(
+        get_death_data_for(area = areas, cause = causes, years = years, data_source = "snapshot"),
+        error = function(e) NULL
+      )
+    }
+
+    # A single region's result for each year, where data/prepared/ holds it
+    # for exactly this frame (R/prepared_data.R).
+    prepared <- from_prepared(
+      "prepared_region_substitution", df, expanded_regions, active_nuts_vintage(),
+      active_nuts_lookup(), active_region_source(), load_municipal_deaths
+    )
+    if (!is.null(prepared)) return(prepared)
+
     substitute_regional_deaths(
       df = df,
       expanded_regions = expanded_regions,
       vintage = active_nuts_vintage(),
       lookup = active_nuts_lookup(),
       source = active_region_source(),
-      # Rows for the municipalities a composition subtracts, which are not
-      # members of the region and so are never in the loaded frame. Read from
-      # the snapshot archive, like the regional rows themselves.
-      load_municipal_deaths = function(areas, years, causes) {
-        tryCatch(
-          get_death_data_for(area = areas, cause = causes, years = years, data_source = "snapshot"),
-          error = function(e) NULL
-        )
-      }
+      load_municipal_deaths = load_municipal_deaths
     )
   }
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env Rscript
-# Invariant sweep: run the planning module and the annual-metrics tab across
+# Invariant sweep: run the planning module and the Mortalidade Observada tab across
 # areas, years, pooling windows and both population denominators, and flag what
 # should never happen.
 #
 #   Rscript tools/invariant_sweep.R               # both parts
 #   Rscript tools/invariant_sweep.R --planning    # planning module only (~3 min)
-#   Rscript tools/invariant_sweep.R --server      # annual tab through the real server only
+#   Rscript tools/invariant_sweep.R --server      # Mortalidade Observada through the real server only
 #   Rscript tools/invariant_sweep.R --update      # accept the current flags
 #   Rscript tools/invariant_sweep.R --report=FILE # also write the report there
 #
@@ -25,7 +25,7 @@
 #   - the Continente's published row against the aggregate of its regions;
 #   - the mean against the end-of-year denominator, which must stay close.
 # Server checks, through testServer on the committed snapshots: every metric of
-# the annual tab, 1991 to the last year, with and without pooling, a region, a
+# Mortalidade Observada, 1991 to the last year, with and without pooling, a region, a
 # municipality and a ULS, both denominators - errors, refusals, missing or
 # implausible values.
 #
@@ -136,7 +136,7 @@ sweep_planning <- function() {
 }
 
 # ---------------------------------------------------------------------------
-# Annual-metrics tab, through the real server
+# Mortalidade Observada tab, through the real server
 # ---------------------------------------------------------------------------
 sweep_server <- function() {
   Sys.setenv(MORTALITY_INSTALL_MISSING_PACKAGES = "false", MORTALITY_DEFAULT_DATA_SOURCE = "snapshot")
@@ -151,22 +151,30 @@ sweep_server <- function() {
   last <- max(as.integer(sub("^year_(\\d{4})\\.rds$", "\\1", list.files("data/snapshots/population", "^year_\\d{4}\\.rds$"))))
   testServer(app, {
     i <- 0L
+    # One year of the Mortalidade Observada tab, the place compared with
+    # Portugal and Norte - the columns the annual tab it replaced always had.
     run <- function(metric, pooling, year, area, basis = "mean") {
       i <<- i + 1L
       session$setInputs(
-        nuts_vintage = "2024", population_basis = basis,
-        annual_year = year, annual_cause = "Todas as causas de morte", annual_sex = "HM",
-        annual_area = area, annual_area_label = "", annual_metric = metric,
-        annual_pooling = as.character(pooling), annual_smr_reference = "Portugal",
-        annual_data_source = "snapshot", go_annual_metrics = i
+        nuts_vintage = "2024", population_basis = basis, data_source = "snapshot",
+        years_import = c(year, year), cause = "Todas as causas de morte", sex = "HM",
+        area = area, area_label = "", observed_area_mode = "sum", observed_compare = c("Portugal", "Norte"),
+        observed_metric = metric, observed_pooling = as.character(pooling), observed_smr_reference = "Portugal",
+        population = "Total", go_rates = i
       )
       key <- paste0(metric, " p", pooling, " ", basis)
-      out <- tryCatch(annual_metrics_long(), error = function(e) e)
+      out <- tryCatch(observed_metrics()$rows, error = function(e) e)
       if (inherits(out, "error")) {
         refused <- inherits(out, "shiny.silent.error") || inherits(out, "validation")
         if (!refused) server_errors <<- server_errors + 1L
         flag("server", if (refused) "refused" else "ERROR", area, year, key, substr(conditionMessage(out), 1, 160))
         return(invisible())
+      }
+      # The annual tab refused the whole request when the place could not have
+      # the year; this tab leaves the place out and keeps the comparisons. Flag
+      # it the same way, so the refusal stays visible.
+      if (!area %in% out$location) {
+        flag("server", "refused", area, year, key, "no value for the place (left out of the request)")
       }
       r <- ranges[[metric]]
       bad <- out[is.na(out$value) | out$value < r[1] | out$value > r[2], , drop = FALSE]

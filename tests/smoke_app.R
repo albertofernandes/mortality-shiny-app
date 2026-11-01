@@ -334,6 +334,28 @@ testServer(app, {
   profile <- tryCatch(output$downloadPlanningProfile, error = function(e) e)
   cat("   profile download:", if (failed(profile)) conditionMessage(profile) else if (file.exists(profile)) paste(file.size(profile), "bytes") else "missing", "\n")
 
+  # The prepared files (R/prepared_data.R) must answer inside the running app,
+  # not only in the tools that build and check them: a fingerprint that differs
+  # between the two would leave every request on the slow fallback, silently.
+  cat("\n=== Prepared files used by the app ===\n")
+  in_app <- function(expr) eval(substitute(expr), environment(build_observed_metrics_table))
+  if (in_app(prepared_data_enabled())) {
+    used <- in_app(isolate({
+      # Norte as the app loads it: every year's regional substitution stored.
+      norte <- resolve_region_areas("Norte", default_region_mode(), active_nuts_lookup(), get_available_areas("snapshot"))$areas
+      frame <- load_raw_cause_data("deaths", norte, "Todas as causas de morte", 1995:2024, "snapshot")
+      stored <- prepared_region_entries(frame, "Norte", active_nuts_vintage(), "Todas as causas de morte")
+      c(
+        deaths = !is.null(prepared_deaths_for(1995:2024, c("Porto", "Portugal"), "Todas as causas de morte")),
+        population = !is.null(prepared_population_for(1995:2024, c("Porto", "Portugal"), "mean")),
+        regions = !any(vapply(stored$entries, is.null, logical(1)))
+      )
+    }))
+    cat("   ", paste(names(used), used, sep = " = ", collapse = ", "), verdict(all(used), "OK", "prepared files used by the app"), "\n")
+  } else {
+    cat("   prepared files switched off or not built; skipped\n")
+  }
+
   # The latest year: all-cause deaths by age rebuilt from weekly deaths, for
   # whole regions only. Norte reaches it; a municipality stops a year before.
   cat("\n=== Latest year in the observed tab ===\n")
